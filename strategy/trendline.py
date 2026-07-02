@@ -212,29 +212,49 @@ def get_active_trend_lines(
     up_lines: List[TrendLine],
     down_lines: List[TrendLine],
     current_idx: int,
+    highs: np.ndarray = None,
+    lows: np.ndarray = None,
     top_n: int = 2,
 ) -> Tuple[List[TrendLine], List[TrendLine]]:
     """
-    获取当前有效的趋势线（延伸到当前K线未跌破/突破的）
+    获取当前有效的趋势线
+
+    有效条件：
+    - 上升趋势线：从 end_idx 到 current_idx，所有低点都不跌破该线
+    - 下降趋势线：从 end_idx 到 current_idx，所有高点都不突破该线
 
     Returns:
         (active_up, active_down)
     """
+    if highs is None or lows is None:
+        raise ValueError("highs and lows are required for forward validation")
+
+    # 对数空间
+    log_highs = np.log(highs + 1e-10)
+    log_lows = np.log(lows + 1e-10)
+
     active_up = []
     for line in up_lines:
-        # 检查延伸到当前位置是否仍有效
-        if line.end_idx >= current_idx - 3:
-            active_up.append(line)
-            continue
-        # 验证延伸后未跌破
-        line_val = line.slope * current_idx + line.intercept
-        # 需要在原始价格空间检查
-        if line_val > 0:
+        # 前向验证：从终点之后到今天，是否有低点跌破该线
+        valid = True
+        for i in range(line.end_idx + 1, current_idx + 1):
+            line_val = line.slope * i + line.intercept
+            if log_lows[i] < line_val - 0.005:  # 跌破了
+                valid = False
+                break
+        if valid:
             active_up.append(line)
 
     active_down = []
     for line in down_lines:
-        if line.end_idx >= current_idx - 3:
+        # 前向验证：从终点之后到今天，是否有高点突破该线
+        valid = True
+        for i in range(line.end_idx + 1, current_idx + 1):
+            line_val = line.slope * i + line.intercept
+            if log_highs[i] > line_val + 0.005:  # 突破了
+                valid = False
+                break
+        if valid:
             active_down.append(line)
             continue
         active_down.append(line)
