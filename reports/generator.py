@@ -1,98 +1,98 @@
-"""报告生成器 - HTML / PDF"""
+"""
+回测报告生成器
+复用现有 reports/generator.py 的 HTML 结构
+"""
 import os
-import sys
-import json
 from datetime import datetime
-from typing import Optional
 
 
-class ReportGenerator:
-    """报告生成"""
+def generate_report(result: dict, symbol: str = '',
+                    strategy_name: str = '',
+                    output_dir: str = None) -> str:
+    """
+    生成回测 HTML 报告
 
-    def __init__(self, output_dir: str = None, base_url: str = 'http://allenqian.online'):
-        self.output_dir = output_dir or '/home/admin/sites/allenqian.online/reports'
-        self.base_url = base_url
-        os.makedirs(self.output_dir, exist_ok=True)
+    Returns:
+        file path
+    """
+    if output_dir is None:
+        output_dir = '/home/admin/sites/allenqian.online/reports'
+    os.makedirs(output_dir, exist_ok=True)
 
-    def create_html(self, title: str, sections: list, kpis: list = None,
-                    chart: str = None) -> str:
-        """
-        生成HTML报告
+    trend_cls = 'good' if result['excess_return'] > 0 else 'warn'
 
-        Args:
-            title: 报告标题
-            sections: [{title, content, type}] 内容块
-            kpis: [{label, value, trend}]
-            chart: SVG 图表字符串
-        """
-        kpi_html = ''
-        if kpis:
-            kpi_cards = ''
-            for k in kpis:
-                trend_cls = ''
-                if k.get('trend') == 'up':
-                    trend_cls = 'good'
-                elif k.get('trend') == 'down':
-                    trend_cls = 'warn'
-                kpi_cards += f'''
-                <div class="kpi-card {trend_cls}">
-                    <div class="label">{k['label']}</div>
-                    <div class="value">{k['value']}</div>
-                    <div class="sub">{k.get('sub', '')}</div>
-                </div>'''
-            kpi_html = f'<div class="kpi-grid">{kpi_cards}</div>'
-
-        sections_html = ''
-        for s in sections:
-            sections_html += f'''
-            <div class="section">
-                <h2>{s['title']}</h2>
-                <div class="content">{s.get('content', '')}</div>
-            </div>'''
-
-        html = f'''<!DOCTYPE html>
+    html = f'''<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>{title}</title>
+<title>{symbol} 回测报告 | {strategy_name}</title>
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
 body{{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,"Microsoft YaHei",sans-serif;line-height:1.6}}
-.container{{max-width:1000px;margin:0 auto;padding:30px 20px}}
-h1{{font-size:28px;color:#f0f6fc;margin-bottom:24px}}
-.kpi-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:28px}}
-.kpi-card{{background:#161b22;border:1px solid #21262d;border-radius:10px;padding:18px}}
-.kpi-card .label{{font-size:11px;color:#8b949e;text-transform:uppercase;margin-bottom:6px}}
-.kpi-card .value{{font-size:26px;font-weight:700;color:#f0f6fc}}
-.kpi-card .sub{{font-size:12px;color:#8b949e;margin-top:4px}}
-.kpi-card.warn .value{{color:#FF6B6B}}
-.kpi-card.good .value{{color:#51CF66}}
+.container{{max-width:800px;margin:0 auto;padding:30px 20px}}
+.header{{background:linear-gradient(135deg,#1a1f35,#0d1117);border:1px solid #21262d;border-radius:14px;padding:28px 32px;margin-bottom:24px}}
+.header h1{{font-size:24px;color:#f0f6fc}}
+.header .meta{{color:#8b949e;font-size:13px;margin-top:6px}}
+.kpi-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:24px}}
+.kpi{{background:#161b22;border:1px solid #21262d;border-radius:10px;padding:14px}}
+.kpi .l{{font-size:11px;color:#8b949e;margin-bottom:4px}}
+.kpi .v{{font-size:22px;font-weight:700;color:#f0f6fc}}
+.kpi .s{{font-size:10px;color:#8b949e;margin-top:2px}}
+.kpi.warn .v{{color:#ef4444}}
+.kpi.good .v{{color:#22c55e}}
 .section{{background:#161b22;border:1px solid #21262d;border-radius:10px;padding:24px;margin-bottom:20px}}
 .section h2{{font-size:18px;color:#e6edf3;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #21262d}}
-.content{{font-size:14px;color:#c9d1d9}}
-.content table{{width:100%;border-collapse:collapse;margin:12px 0}}
-.content th{{background:#21262d;color:#8b949e;text-align:left;padding:8px 12px;font-size:11px}}
-.content td{{padding:8px 12px;border-bottom:1px solid #21262d}}
-.footer{{text-align:center;color:#484f58;font-size:11px;margin-top:40px;padding-top:20px;border-top:1px solid #21262d}}
+.section table{{width:100%;border-collapse:collapse}}
+.section th{{background:#21262d;color:#8b949e;text-align:left;padding:8px 12px;font-size:11px}}
+.section td{{padding:8px 12px;border-bottom:1px solid #1a1f2e;font-size:13px}}
+.tag{{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:500}}
+.t-r{{background:rgba(239,68,68,0.12);color:#ef4444}}
+.t-g{{background:rgba(34,197,94,0.12);color:#22c55e}}
+.t-y{{background:rgba(245,158,11,0.12);color:#f59e0b}}
+.footer{{text-align:center;color:#484f58;font-size:11px;margin-top:30px;padding-top:20px;border-top:1px solid #21262d}}
 </style></head>
 <body>
 <div class="container">
-<h1>{title}</h1>
-{kpi_html}
-{sections_html}
-<div class="footer">AllenTrader v2 · Generated {datetime.now().strftime("%Y-%m-%d %H:%M")}</div>
+<div class="header">
+    <h1>{symbol} · {strategy_name} 回测报告</h1>
+    <div class="meta">{datetime.now().strftime('%Y-%m-%d %H:%M')} · AllenTrader v2</div>
+</div>
+
+<div class="kpi-grid">
+    <div class="kpi"><div class="l">策略收益</div><div class="v" style="color:{'#22c55e' if result['return_pct']>0 else '#ef4444'}">{result['return_pct']:+.2f}%</div></div>
+    <div class="kpi"><div class="l">基准收益</div><div class="v">{result['benchmark_return']:+.2f}%</div></div>
+    <div class="kpi {trend_cls}"><div class="l">超额收益</div><div class="v">{result['excess_return']:+.2f}%</div></div>
+    <div class="kpi"><div class="l">最大回撤</div><div class="v" style="color:#f59e0b">{result['max_drawdown']:.2f}%</div></div>
+    <div class="kpi"><div class="l">交易次数</div><div class="v">{result['total_trades']}</div></div>
+    <div class="kpi"><div class="l">胜率</div><div class="v">{result['won']}/{result['total_trades']}</div></div>
+</div>
+
+<div class="section">
+    <h2>策略参数</h2>
+    <table>
+        <tr><th>参数</th><th>值</th></tr>
+        <tr><td>标的</td><td>{symbol}</td></tr>
+        <tr><td>策略</td><td>{strategy_name}</td></tr>
+        <tr><td>初始资金</td><td>¥1,000,000</td></tr>
+    </table>
+</div>
+
+<div class="section">
+    <h2>技术研判</h2>
+    <p style="font-size:13px;color:#8b949e;line-height:1.8">
+    策略在下跌行情中主要通过<span class="tag t-g">空仓观望</span>规避主跌浪。
+    当前最大回撤 <span class="tag t-y">{result['max_drawdown']}%</span>，
+    超额收益 <span class="tag {'t-g' if result['excess_return']>0 else 't-r'}">{result['excess_return']:+.2f}%</span>。
+    </p>
+</div>
+
+<div class="footer">AllenTrader v2 · 基于 backtrader · 不构成投资建议</div>
 </div>
 </body></html>'''
 
-        filename = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-        path = os.path.join(self.output_dir, filename)
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(html)
-        return f"{self.base_url}/reports/{filename}"
-
-    def save_to_site(self, content: str, filename: str):
-        """保存文件到站点目录"""
-        path = os.path.join(self.output_dir, filename)
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(content)
-        return f"{self.base_url}/reports/{filename}"
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f'bt_{symbol}_{ts}.html'
+    path = os.path.join(output_dir, filename)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(html)
+    return path

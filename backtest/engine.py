@@ -1,138 +1,159 @@
-"""回测引擎"""
-import pandas as pd
-import numpy as np
-from dataclasses import dataclass, field
-from typing import List, Optional
-from datetime import datetime
+"""
+回测引擎 — backtrader.cerebro 封装
 
-from strategy.base import Signal, SignalType, Portfolio
+用法:
+    from backtest.engine import run_backtest
+    from strategy.trend_breakout import TrendBreakout
 
-
-@dataclass
-class BacktestResult:
-    """回测结果"""
-    initial_cash: float
-    final_value: float
-    total_return: float
-    annual_return: float
-    max_drawdown: float
-    sharpe_ratio: float
-    win_rate: float
-    total_trades: int
-    trades: List[dict] = field(default_factory=list)
-    equity_curve: pd.Series = None
-
-    def summary(self) -> str:
-        return (
-            f"初始资金: ¥{self.initial_cash:,.0f}\n"
-            f"最终价值: ¥{self.final_value:,.0f}\n"
-            f"总收益率: {self.total_return:.2%}\n"
-            f"年化收益: {self.annual_return:.2%}\n"
-            f"最大回撤: {self.max_drawdown:.2%}\n"
-            f"夏普比率: {self.sharpe_ratio:.2f}\n"
-            f"胜率: {self.win_rate:.2%}\n"
-            f"交易次数: {self.total_trades}"
-        )
+    result = run_backtest('600519', TrendBreakout, start='20250701', end='20260702')
+"""
+import backtrader as bt
+from core.data_feed import load_bt_data
 
 
-class BacktestEngine:
-    """简易回测引擎"""
+def run_backtest(symbol: str, strategy_cls,
+                 start: str = None, end: str = None,
+                 cash: float = 1_000_000.0,
+                 commission: float = 0.0003,
+                 **strategy_kwargs) -> dict:
+    """
+    运行回测
 
-    def __init__(self, initial_cash: float = 100000, commission: float = 0.0003):
-        self.initial_cash = initial_cash
-        self.commission = commission
-        self.portfolio = Portfolio(cash=initial_cash, total_value=initial_cash)
+    Args:
+        symbol: 标的代码 (如 '600519')
+        strategy_cls: 策略类 (继承 BaseStrategy)
+        start/end: 日期范围
+        cash: 初始资金
+        commission: 佣金费率
+        **strategy_kwargs: 传给策略的额外参数
 
-    def run(self, data: pd.DataFrame, strategy) -> BacktestResult:
-        """
-        运行回测
+    Returns:
+        {
+            'final_value': float,
+            'return_pct': float,
+            'benchmark_return': float,
+            'excess_return': float,
+            'max_drawdown': float,
+            'total_trades': int,
+            'won': int,
+            'lost': int,
+            'trades': [(entry_date, exit_date, pnl), ...]
+        }
+    """
+    data = load_bt_data(symbol, start=start, end=end)
+    df_raw = data._dataname if hasattr(data, '_dataname') else data.p.dataname
 
-        Args:
-            data: OHLCV DataFrame, index=datetime
-            strategy: 策略对象，需要有 on_bar 方法
-        """
-        trades = []
-        equity = [self.initial_cash]
+    cerebro = bt.Cerebro()
+    cerebro.adddata(data)
+    cerebro.addstrategy(strategy_cls, **strategy_kwargs)
+    cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='trades')
+    cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
+    cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
 
-        for i, (idx, bar) in enumerate(data.iterrows()):
-            bar_dict = bar.to_dict()
-            bar_dict['date'] = idx
+    cerebro.broker.setcash(cash)
+    cerebro.broker.setcommission(commission=commission)
 
-            signal = strategy.on_bar('test', bar_dict)
+    start_val = cerebro.broker.getvalue()
+    results = cerebro.run()
+    final_val = cerebro.broker.getvalue()
 
-            if signal.type == SignalType.BUY:
-                price = bar['close']
-                amount = int(self.portfolio.cash * 0.3 / price / 100) * 100
-                if amount > 0:
-                    cost = amount * price * (1 + self.commission)
-                    if cost <= self.portfolio.cash:
-                        self.portfolio.cash -= cost
-                        self.portfolio.positions[signal.symbol] = {
-                            'amount': amount,
-                            'cost_price': price,
-                            'market_value': amount * price
-                        }
-                        trades.append({
-                            'date': idx,
-                            'type': 'buy',
-                            'price': price,
-                            'amount': amount,
-                            'cost': cost
-                        })
+    strat = results[0]
+    ta = strat.analyzers.trades.get_analysis()
+    dd = strat.analyzers.drawdown.get_analysis()
+    ret_analyzer = strat.analyzers.returns.get_analysis()
 
-            elif signal.type == SignalType.SELL:
-                pos = self.portfolio.positions.get(signal.symbol, {})
-                amount = pos.get('amount', 0)
-                if amount > 0:
-                    price = bar['close']
-                    revenue = amount * price * (1 - self.commission)
-                    self.portfolio.cash += revenue
-                    del self.portfolio.positions[signal.symbol]
-                    trades.append({
-                        'date': idx,
-                        'type': 'sell',
-                        'price': price,
-                        'amount': amount,
-                        'revenue': revenue
-                    })
+    total = ta.get('total', {}).get('total', 0)
+    won = ta.get('won', {}).get('total', 0)
+    lost = ta.get('lost', {}).get('total', 0)
+    max_dd = dd.get('max', {}).get('drawdown', 0)
 
-            # 更新市值
-            stock_value = 0
-            for sym, pos in self.portfolio.positions.items():
-                pos['market_value'] = pos['amount'] * bar['close']
-                stock_value += pos['market_value']
-            self.portfolio.total_value = self.portfolio.cash + stock_value
-            equity.append(self.portfolio.total_value)
+    ret_pct = (final_val - start_val) / start_val * 100
 
-        return self._calc_metrics(equity, trades)
+    # 买入持有收益
+    bench_ret = (df_raw['close'].iloc[-1] - df_raw['close'].iloc[0]) / df_raw['close'].iloc[0] * 100
 
-    def _calc_metrics(self, equity: list, trades: list) -> BacktestResult:
-        equity_s = pd.Series(equity)
+    return {
+        'final_value': final_val,
+        'return_pct': round(ret_pct, 2),
+        'benchmark_return': round(bench_ret, 2),
+        'excess_return': round(ret_pct - bench_ret, 2),
+        'max_drawdown': round(max_dd, 2),
+        'total_trades': total,
+        'won': won,
+        'lost': lost,
+        'annual_return': ret_analyzer.get('rnorm100', 0),
+    }
 
-        returns = equity_s.pct_change().dropna()
-        total_return = (equity_s.iloc[-1] / equity_s.iloc[0]) - 1
-        n_days = len(equity_s)
-        annual_return = (1 + total_return) ** (252 / n_days) - 1 if n_days > 0 else 0
-        max_dd = ((equity_s / equity_s.cummax()) - 1).min()
 
-        # 夏普比率
-        risk_free = 0.02
-        excess = returns.mean() * 252 - risk_free
-        sharpe = excess / (returns.std() * np.sqrt(252)) if returns.std() > 0 else 0
+def print_result(result: dict):
+    """格式化打印回测结果"""
+    print(f"""
+╔══════════════════════════════╗
+║         回 测 结 果          ║
+╠══════════════════════════════╣
+║ 策略收益:  {result['return_pct']:>8.2f}%         ║
+║ 基准收益:  {result['benchmark_return']:>8.2f}%         ║
+║ 超额收益:  {result['excess_return']:>8.2f}%         ║
+║ 最大回撤:  {result['max_drawdown']:>8.2f}%         ║
+║ 总交易:    {result['total_trades']:>8} 笔         ║
+║ 胜率:      {result['won']}/{result['total_trades']}                 ║
+╚══════════════════════════════╝
+""")
 
-        # 胜率
-        wins = sum(1 for t in trades if t.get('revenue', 0) > t.get('cost', 0))
-        win_rate = wins / len(trades) if trades else 0
 
-        return BacktestResult(
-            initial_cash=self.initial_cash,
-            final_value=equity_s.iloc[-1],
-            total_return=total_return,
-            annual_return=annual_return,
-            max_drawdown=max_dd,
-            sharpe_ratio=sharpe,
-            win_rate=win_rate,
-            total_trades=len(trades),
-            trades=trades,
-            equity_curve=equity_s
-        )
+def optimize(symbol: str, strategy_cls,
+             param_grid: dict,
+             start: str = None, end: str = None,
+             cash: float = 1_000_000.0,
+             metric: str = 'excess_return') -> list:
+    """
+    参数网格搜索
+
+    Args:
+        symbol: 标的
+        strategy_cls: 策略类
+        param_grid: {param_name: [v1, v2, ...]}
+        start/end: 日期
+        cash: 初始资金
+        metric: 排序指标
+
+    Returns:
+        [{params, result}, ...] 按 metric 降序
+    """
+    data = load_bt_data(symbol, start=start, end=end)
+    df_raw = data._dataname if hasattr(data, '_dataname') else data.p.dataname
+
+    cerebro = bt.Cerebro(optreturn=False)
+    cerebro.adddata(data)
+
+    # 动态添加策略优化参数
+    cerebro.optstrategy(strategy_cls, **param_grid)
+
+    cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='trades')
+    cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
+    cerebro.broker.setcash(cash)
+    cerebro.broker.setcommission(commission=0.0003)
+
+    start_val = cerebro.broker.getvalue()
+    bench_ret = (df_raw['close'].iloc[-1] - df_raw['close'].iloc[0]) / df_raw['close'].iloc[0] * 100
+
+    all_results = []
+    for opt in cerebro.run():
+        final_val = cerebro.broker.getvalue()
+        ret_pct = (final_val - start_val) / start_val * 100
+
+        strat = opt[0]
+        ta = strat.analyzers.trades.get_analysis()
+        dd = strat.analyzers.drawdown.get_analysis()
+
+        result = {
+            'params': {k: getattr(strat.params, k) for k in param_grid},
+            'return_pct': round(ret_pct, 2),
+            'excess_return': round(ret_pct - bench_ret, 2),
+            'max_drawdown': round(dd.get('max', {}).get('drawdown', 0), 2),
+            'total_trades': ta.get('total', {}).get('total', 0),
+        }
+        all_results.append(result)
+
+    all_results.sort(key=lambda x: x[metric], reverse=True)
+    return all_results

@@ -1,61 +1,73 @@
-"""策略基类"""
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Optional
+"""
+策略基类 — 继承 backtrader.Strategy
+所有策略从此派生
+"""
+import backtrader as bt
+from abc import abstractmethod
 
 
-class SignalType(Enum):
-    BUY = 'buy'
-    SELL = 'sell'
-    HOLD = 'hold'
+class BaseStrategy(bt.Strategy):
+    """
+    策略基类
 
+    子类只需实现:
+        on_bar(data)  → 返回信号 (buy/sell/None)
+        init_indicators() → 初始化指标（可选）
 
-@dataclass
-class Signal:
-    """交易信号"""
-    symbol: str
-    type: SignalType
-    price: float
-    amount: int = 0
-    reason: str = ''
-    confidence: float = 0.0
-    timestamp: str = ''
+    内置功能:
+        - 资金管理（仓位上限于 params.risk_pct）
+        - 日志
+        - 自动添加分析器
+    """
+    params = (
+        ('risk_pct', 0.2),       # 单笔最大仓位（总资金%）
+        ('log_level', 'info'),   # debug / info / silent
+    )
 
+    def log(self, msg: str, level: str = 'info'):
+        if self.p.log_level == 'silent':
+            return
+        if self.p.log_level == 'debug' or level != 'debug':
+            dt = self.data.datetime.date(0)
+            print(f'  [{dt}] {msg}')
 
-@dataclass
-class Portfolio:
-    """投资组合"""
-    cash: float = 0.0
-    total_value: float = 0.0
-    positions: dict = field(default_factory=dict)
-
-    @property
-    def stock_ratio(self) -> float:
-        if self.total_value == 0:
-            return 0.0
-        stock_value = sum(
-            p.get('market_value', 0) for p in self.positions.values()
-        )
-        return stock_value / self.total_value
-
-
-class BaseStrategy(ABC):
-    """策略基类"""
-
-    def __init__(self, name: str = 'base'):
-        self.name = name
-        self.portfolio: Optional[Portfolio] = None
+    def size_for_risk(self, price: float = None) -> int:
+        """计算可买股数（按风险仓位）"""
+        cash = self.broker.getcash()
+        if price is None:
+            price = self.data.close[0]
+        max_value = cash * self.p.risk_pct
+        return int(max_value / price / 100) * 100  # A股100股整倍数
 
     @abstractmethod
-    def on_bar(self, symbol: str, data: dict) -> Signal:
-        """每个 Bar 调用，返回交易信号"""
-        ...
-
-    def on_order_filled(self, order: dict):
-        """订单成交回调"""
+    def init_indicators(self):
+        """初始化技术指标（在 __init__ 中调用）"""
         pass
 
-    def update_portfolio(self, portfolio: Portfolio):
-        """更新组合状态"""
-        self.portfolio = portfolio
+    @abstractmethod
+    def on_bar(self) -> dict:
+        """
+        每根 bar 的决策逻辑
+
+        Returns:
+            {'action': 'buy'/'sell'/None, 'size': int, 'reason': str}
+        """
+        pass
+
+    def next(self):
+        signal = self.on_bar()
+        if signal is None:
+            return
+
+        action = signal.get('action')
+        size = signal.get('size')
+
+        if action == 'buy' and not self.position:
+            if size is None:
+                size = self.size_for_risk()
+            self.log(f'买入 {size}股 (原因: {signal.get("reason","")})')
+            self.buy(size=size)
+
+        elif action == 'sell' and self.position:
+            self.log(f'卖出 (原因: {signal.get("reason","")})')
+            self.close()

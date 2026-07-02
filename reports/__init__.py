@@ -1,4 +1,4 @@
 """报告模块"""
-from .generator import ReportGenerator
+from .generator import generate_report
 
-__all__ = ['ReportGenerator']
+__all__ = ['generate_report']
