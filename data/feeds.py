@@ -73,27 +73,48 @@ class DataFeed:
         import re
 
         prefix = {'a': 'sh', 'hk': 'hk', 'us': 'us'}
-        code_map = {
-            'a': symbol.zfill(6) if symbol.isdigit() else symbol,
-            'hk': symbol.zfill(5),
-            'us': symbol.upper()
-        }
-        code = f"{prefix[market]}{code_map[market]}"
+        # Strip existing exchange prefix for A-shares
+        clean_symbol = symbol
+        if market == 'a':
+            if clean_symbol.startswith(('sh', 'sz')):
+                clean_symbol = clean_symbol[2:]
+            clean_symbol = clean_symbol.zfill(6)
+            # Auto-detect exchange
+            detected_prefix = 'sh' if clean_symbol.startswith(('6', '9')) else 'sz'
+        else:
+            detected_prefix = prefix[market]
+            clean_symbol = clean_symbol.zfill(5) if market == 'hk' else clean_symbol.upper()
+
+        code = f"{detected_prefix}{clean_symbol}"
 
         result = subprocess.run(
-            ['curl', '-s', f'https://qt.gtimg.cn/q={code}'],
-            capture_output=True, text=True, timeout=10
+            f"curl -s 'https://qt.gtimg.cn/q={code}' | iconv -f GBK -t UTF-8",
+            shell=True, capture_output=True, text=True, timeout=10
         )
-
         raw = result.stdout
-        raw = subprocess.run(['iconv', '-f', 'GBK', '-t', 'UTF-8'],
-                             input=raw, capture_output=True, text=True).stdout
 
         fields = raw.split('~')
         if len(fields) < 40:
             return {}
 
-        if market == 'us':
+        if market == 'a':
+            return {
+                'name': fields[1],
+                'price': float(fields[3]),
+                'prev_close': float(fields[4]),
+                'change': float(fields[31]) if fields[31] else 0,
+                'change_pct': float(fields[32]) if fields[32] else 0,
+                'high': float(fields[33]) if fields[33] else 0,
+                'low': float(fields[34]) if fields[34] else 0,
+                'volume': int(fields[36]) if fields[36] else 0,
+                'pe': float(fields[39]) if fields[39] else None,
+                'high_52w': float(fields[47]) if len(fields) > 47 and fields[47] else None,
+                'low_52w': float(fields[48]) if len(fields) > 48 and fields[48] else None,
+                'market_cap': float(fields[44]) if len(fields) > 44 and fields[44] else None,
+                'pb': float(fields[46]) if len(fields) > 46 and fields[46] else None,
+                'currency': 'CNY',
+            }
+        elif market == 'us':
             return {
                 'name': fields[1],
                 'price': float(fields[3]),

@@ -88,11 +88,11 @@ h1{{font-size:28px;color:#f0f6fc;margin-bottom:24px}}
         path = os.path.join(self.output_dir, filename)
         with open(path, 'w', encoding='utf-8') as f:
             f.write(html)
-        return f"{self.base_url}/{filename}"
+        return f"{self.base_url}/reports/{filename}"
 
     def save_to_site(self, content: str, filename: str):
         """保存文件到站点目录"""
         path = os.path.join(self.output_dir, filename)
         with open(path, 'w', encoding='utf-8') as f:
             f.write(content)
-        return f"{self.base_url}/{filename}"
+        return f"{self.base_url}/reports/{filename}"
