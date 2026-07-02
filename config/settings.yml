@@ -1,0 +1,39 @@
+# ============================================
+# AllenTrader v2 配置
+# ============================================
+
+# --- 数据源 ---
+data:
+  # A股数据源: akshare / tencent
+  a_share_source: akshare
+  # 行情更新间隔(秒)
+  refresh_interval: 30
+
+# --- 交易参数 ---
+trade:
+  # 单只股票最大仓位占比
+  single_stock_ratio_limit: 0.3
+  # 总仓位上限
+  stock_assets_ratio_limit: 0.6
+  # 单笔买入占总资产上限
+  single_buy_ratio: 0.2
+  # 止损比例
+  stop_loss: -0.08
+  # 止盈比例
+  stop_profit: 0.15
+
+# --- 回测 ---
+backtest:
+  initial_cash: 100000
+  commission: 0.0003
+  slippage: 0.001
+
+# --- 报告 ---
+report:
+  output_dir: /home/admin/sites/allenqian.online/reports
+  base_url: http://allenqian.online
+
+# --- Web ---
+web:
+  host: 0.0.0.0
+  port: 8080
