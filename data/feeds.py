@@ -16,40 +16,49 @@ class DataFeed:
 
     @staticmethod
     def get_a_share_daily(symbol: str, start_date: str = None, end_date: str = None,
-                          adjust: str = 'qfq') -> pd.DataFrame:
+                          adjust: str = 'qfq', use_cache: bool = True) -> pd.DataFrame:
         """
-        获取A股日线数据
+        获取A股日线数据（带缓存）
 
         Args:
             symbol: 股票代码，如 'sh600519' 或 '600519'
             start_date: 开始日期 'YYYYMMDD'
             end_date: 结束日期 'YYYYMMDD'
             adjust: 复权类型 'qfq'(前复权) / 'hfq'(后复权) / ''(不复权)
+            use_cache: 是否使用缓存（当日数据不缓存）
         """
         import akshare as ak
+        import os, pickle
 
         if not start_date:
             start_date = (datetime.now() - timedelta(days=365)).strftime('%Y%m%d')
         if not end_date:
             end_date = datetime.now().strftime('%Y%m%d')
 
-        # 标准化代码格式
+        # 标准化代码
         if not symbol.startswith(('sh', 'sz')):
-            # 自动判断交易所
             code = symbol.zfill(6)
-            if code.startswith(('6', '9')):
-                symbol = f'sh{code}'
-            else:
-                symbol = f'sz{code}'
+            symbol = 'sh' + code if code.startswith(('6', '9')) else 'sz' + code
+
+        # 缓存：只缓存历史数据（end_date不是今天）
+        cache_key = f"/tmp/at_cache_{symbol}_{start_date}_{end_date}.pkl"
+        today = datetime.now().strftime('%Y%m%d')
+        if use_cache and end_date < today and os.path.exists(cache_key):
+            with open(cache_key, 'rb') as f:
+                df = pickle.load(f)
+            return df
 
         df = ak.stock_zh_a_daily(
-            symbol=symbol,
-            start_date=start_date,
-            end_date=end_date,
-            adjust=adjust
+            symbol=symbol, start_date=start_date, end_date=end_date, adjust=adjust
         )
         df['date'] = pd.to_datetime(df['date'])
         df.set_index('date', inplace=True)
+
+        # 缓存历史数据
+        if end_date < today:
+            with open(cache_key, 'wb') as f:
+                pickle.dump(df, f)
+
         return df
 
     @staticmethod
